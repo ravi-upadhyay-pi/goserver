@@ -2,46 +2,28 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
-	"github.com/jackc/pgx"
+	"fasthttptest/ferror"
+	"fasthttptest/log"
 	"github.com/valyala/fasthttp"
-	"log"
 	"strings"
 )
 
-const plaintextPrefix = "/plaintext"
-const userPrefix = "/user"
-
-type MainHandler struct {
-	uh user
-	ph plaintext
+func notFound(ctx *fasthttp.RequestCtx) (interface{}, error) {
+	return nil, ferror.New(404, ferror.NotFound, "404 Not Found")
 }
 
-func NewMainHandler(db *pgx.ConnPool) MainHandler {
-	return MainHandler {
-		uh: user{db},
-		ph: plaintext{},
-	}
-}
+type handler func (logger log.Logger, ctx *fasthttp.RequestCtx) (interface{}, error)
 
-func (mh *MainHandler) Handle(ctx *fasthttp.RequestCtx) {
-	putCLogger(ctx)
-	path := string(ctx.Path())
-	ctx.SetUserValue("relativePath", path)
-	ctx.SetContentType("application/json")
-	if isPrefix(ctx, plaintextPrefix){handle(ctx, mh.ph.handle)
-	}else if isPrefix(ctx, userPrefix){handle(ctx, mh.uh.handle)
-	}else{handle(ctx, notFound)}
-}
-
-func handle(ctx *fasthttp.RequestCtx, handler handler) {
-	res, err := handler(ctx)
+func handle(logger log.Logger, ctx *fasthttp.RequestCtx, handler handler) {
+	res, err := handler(logger, ctx)
 	if err != nil {
-		var herr herror
+		var herr *ferror.Error
 		ctx.Response.Reset()
 		switch v := err.(type) {
-		case herror: herr = v
-		default: herr = herror{500, "internal server error", v.Error()}
+		case *ferror.Error:
+			herr = v
+		default:
+			herr = ferror.New(500, ferror.InternalServerError, v.Error())
 		}
 		json, _ := json.Marshal(herr)
 		ctx.SetStatusCode(herr.HttpStatusCode)
@@ -52,55 +34,41 @@ func handle(ctx *fasthttp.RequestCtx, handler handler) {
 	}
 }
 
-func isPrefix(ctx *fasthttp.RequestCtx, prefix string) bool {
-	path := relativePath(ctx)
-	if strings.HasPrefix(path, prefix) {
-		ctx.SetUserValue("relativePath", path[len(prefix):])
-		return true
+func Handle(ctx *fasthttp.RequestCtx, handler handler) {
+	path := strings.Split(string(ctx.Path()), "/")[1:]
+	ctx.SetUserValue("relativePath", path)
+	logger := getLogger(ctx)
+	handle(logger, ctx, handler)
+}
+
+func isPrefix(ctx *fasthttp.RequestCtx, prefix ...string) bool {
+	path := ctx.UserValue("relativePath").([]string)
+	if len(prefix) > len(path) {
+		return false
 	}
-	return false
+	for i := 0; i < len(prefix); i++ {
+		if prefix[i][0] == ':' {
+			ctx.SetUserValue(prefix[i], path[i])
+		} else if path[i] != prefix[i] {
+			return false
+		}
+	}
+	ctx.SetUserValue("relativePath", path[len(prefix):])
+	return true
 }
 
-func relativePath(ctx *fasthttp.RequestCtx) string {
-	return ctx.UserValue("relativePath").(string)
+func match(ctx *fasthttp.RequestCtx, method string, prefix ...string) bool {
+	return string(ctx.Method()) == method && isPrefix(ctx, prefix...) &&
+		len(ctx.UserValue("relativePath").([]string)) == 0
 }
 
-func notFound(ctx *fasthttp.RequestCtx) (interface{}, error){
-	return nil, &herror{404, "404 Not Found", "at " + relativePath(ctx)}
-}
-
-type herror struct {
-	HttpStatusCode int
-	ErrorCode string
-	Message string
-}
-func (herr herror) Error() string {return herr.Message}
-type handler func (ctx *fasthttp.RequestCtx) (interface{}, error)
-
-
-type cLog struct {
-	cid string
-}
-
-func putCLogger(ctx *fasthttp.RequestCtx) cLog {
-	var cid string
-	cidBytes := ctx.Request.Header.Peek("X-Request-Id")
-	if len(cidBytes) == 0 {
-		cid = "unknown"
+func getLogger(ctx *fasthttp.RequestCtx) log.Logger {
+	var requestId string
+	requestIdBytes := ctx.Request.Header.Peek("X-Request-Id")
+	if len(requestIdBytes) == 0 {
+		requestId = "unknown"
 	} else {
-		cid = string(cidBytes)
+		requestId = string(requestIdBytes)
 	}
-	clogger := cLog{cid: cid}
-	ctx.SetUserValue("clogger", clogger)
-	return clogger
-
-}
-
-func cLogger(ctx *fasthttp.RequestCtx) cLog {
-	return ctx.UserValue("clogger").(cLog)
-}
-
-func (clog *cLog) Printf(format string, v ...interface{}) {
-	format = clog.cid + ": " + format
-	log.Output(2,fmt.Sprintf(format, v...))
+	return log.Logger{Id: requestId}
 }
