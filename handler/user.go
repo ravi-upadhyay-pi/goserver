@@ -9,30 +9,30 @@ import (
 )
 
 type user struct {
-	userService *service.UserService
+	service *service.User
 }
 
 func (h *user) handle(logger log.Logger, ctx *fasthttp.RequestCtx) (interface{}, error) {
 	if match(ctx, "POST", ":username", ":password") {
 		username := ctx.UserValue(":username").(string)
 		password := ctx.UserValue(":password").(string)
-		return h.userService.CreateSession(logger, username, password)
+		return h.service.Repository.CreateSession(username, password)
 	} else if match(ctx, "GET") {
 		sessionId := string(ctx.Request.Header.Peek("Session-Id"))
-		return h.userService.GetProfile(logger, sessionId)
+		return h.service.GetProfile(logger, sessionId)
 	} else if match(ctx, "DELETE") {
 		sessionId := string(ctx.Request.Header.Peek("Session-Id"))
-		return nil, h.userService.RemoveSession(logger, sessionId)
+		return nil, h.service.Repository.RemoveSession(sessionId)
 	} else if match(ctx, "DELETE", "all"){
 		sessionId := string(ctx.Request.Header.Peek("Session-Id"))
-		return nil, h.userService.RemoveAllSession(logger, sessionId)
+		return nil, h.service.Repository.RemoveAllSession(logger, sessionId)
 	} else if match(ctx, "POST") {
 		user := &model.User{}
 		err := json.Unmarshal(ctx.PostBody(), user)
 		if err != nil {
 			return nil, err
 		}
-		return nil, h.userService.Add(logger, user)
+		return nil, h.service.Add(logger, user)
 	} else {
 		return notFound(ctx)
 	}

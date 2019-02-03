@@ -9,16 +9,16 @@ import (
 	"github.com/jackc/pgx"
 )
 
-type UserRepository struct {
+type User struct {
 	db *pgx.ConnPool
 	redis *redis.Client
 }
 
-func NewUserRepository(db *pgx.ConnPool, redis *redis.Client) UserRepository {
-	return UserRepository{db: db, redis: redis}
+func NewUserRepository(db *pgx.ConnPool, redis *redis.Client) User {
+	return User{db: db, redis: redis}
 }
 
-func (r UserRepository) Insert(logger log.Logger, user *model.User) error {
+func (r User) Insert(logger log.Logger, user *model.User) error {
 	sql := `
 		insert into users (
 			username, password, email_id, phone_number, first_name, 
@@ -36,7 +36,7 @@ func (r UserRepository) Insert(logger log.Logger, user *model.User) error {
 	return err
 }
 
-func (r UserRepository) CreateSession(username string, password string) (sessionId string, err error) {
+func (r User) CreateSession(username string, password string) (sessionId string, err error) {
 	sql := `
 		select count(username) from users where username = $1 and password = $2`
 	var count uint64
@@ -49,7 +49,7 @@ func (r UserRepository) CreateSession(username string, password string) (session
 	return r.createSession(username)
 }
 
-func (r UserRepository) GetUser(username string) (user model.User, err error) {
+func (r User) GetUser(username string) (user model.User, err error) {
 	sql := `
 		select 
 			username, password, email_id, phone_number, 
@@ -61,7 +61,7 @@ func (r UserRepository) GetUser(username string) (user model.User, err error) {
 	return
 }
 
-func (r UserRepository) createSession(username string) (sessionId string, err error) {
+func (r User) createSession(username string) (sessionId string, err error) {
 	sessionId = uuid.New().String()
 	_, err = r.redis.Set(rSessionId + sessionId, username, 0).Result()
 	if err != nil {return}
@@ -69,12 +69,15 @@ func (r UserRepository) createSession(username string) (sessionId string, err er
 	return
 }
 
-func (r UserRepository) GetSession(sessionId string) (username string, err error) {
+func (r User) GetSession(sessionId string) (username string, err error) {
 	username, err = r.redis.Get(rSessionId + sessionId).Result()
+	if err == redis.Nil {
+		err = ferror.New(401, ferror.Unauthorized, "You are not logged in")
+	}
 	return
 }
 
-func (r UserRepository) RemoveSession(sessionId string) error {
+func (r User) RemoveSession(sessionId string) error {
 	username, err := r.redis.Get(rSessionId + sessionId).Result()
 	_, err = r.redis.SRem(rUserSession + username, sessionId).Result()
 	if err != nil {return err}
@@ -82,11 +85,10 @@ func (r UserRepository) RemoveSession(sessionId string) error {
 	return err
 }
 
-func (r UserRepository) RemoveAllSession(logger log.Logger, username string) error {
+func (r User) RemoveAllSession(_ log.Logger, username string) error {
 	sessions, err := r.redis.SMembers(rUserSession + username).Result()
 	if err != nil {return err}
 	for i := 0; i < len(sessions); i++ {
-		logger.Printf("Session: %s", sessions[i])
 		_, err := r.redis.Del(rSessionId + sessions[i]).Result()
 		if err != nil {return err}
 	}

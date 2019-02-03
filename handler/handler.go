@@ -26,7 +26,7 @@ func handle(logger log.Logger, ctx *fasthttp.RequestCtx, handler handler) {
 			herr = ferror.New(500, ferror.InternalServerError, v.Error())
 		}
 		json, _ := json.Marshal(herr)
-		ctx.SetStatusCode(herr.HttpStatusCode)
+		ctx.SetStatusCode(herr.HttpStatus)
 		ctx.SetBody(json)
 	} else {
 		json, _ := json.Marshal(res)
